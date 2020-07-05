@@ -43,7 +43,7 @@ class Model():
         
 		att = attention(outputs)
 		outputs = tf.multiply(outputs, att)
-        # outputs = conv1d(outputs)
+#        outputs = conv1d(outputs)
 		lstm_out = lstm(outputs, self.hidden_units)
 		lstm_out = tf.reduce_max(lstm_out, 1)
 
