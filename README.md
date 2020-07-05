@@ -1,1 +1,1 @@
-tencent advertisement algorithm contest
+tsetnoc mhtirogla tnemesitrevda tnecnet
