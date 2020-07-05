@@ -1,1 +1,1 @@
-Tencent Advertisement Algorithm Contest
+tencent advertisement algorithm contest
