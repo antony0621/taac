@@ -43,7 +43,7 @@ class Model():
         
 		att = attention(outputs)
 		outputs = tf.multiply(outputs, att)
-        
+        # outputs = conv1d(outputs)
 		lstm_out = lstm(outputs, self.hidden_units)
 		lstm_out = tf.reduce_max(lstm_out, 1)
 
@@ -94,44 +94,8 @@ def lstm(sequences, hidden_units=None):
 	outputs = tf.stack(outputs, 1)
 	return outputs
     
-
-#config e.g. dilations: [1,4,16,] In most cases[1,4,] is enough
-def nextitnet_residual_block(input_, dilation, layer_id=1,
-                            residual_channels=600, kernel_size=3,
-                            causal=True, train=True):
-    resblock_type = "decoder"
-    resblock_name = "nextitnet_residual_block{}_layer_{}_{}".format(resblock_type, layer_id, dilation)
-    with tf.variable_scope(resblock_name):
-
-        dilated_conv = conv1d(input_, residual_channels,
-                              dilation, kernel_size,
-                              causal=causal,
-                              name="dilated_conv1"
-                              )
-        input_ln = layer_norm(dilated_conv, name="layer_norm1", trainable=train)
-        #input_ln=tf.contrib.layers.layer_norm(dilated_conv,reuse=not train, trainable=train)  #performance is not good, paramter wrong?
-        relu1 = tf.nn.relu(input_ln)
-
-
-        dilated_conv = conv1d(relu1,  residual_channels,
-                              2 *dilation, kernel_size,
-                              causal=causal,
-                              name="dilated_conv2"
-                              )
-
-        input_ln = layer_norm(dilated_conv, name="layer_norm2", trainable=train)
-        #input_ln = tf.contrib.layers.layer_norm(dilated_conv, reuse=not train, trainable=train)
-        relu1 = tf.nn.relu(input_ln)
-        print(input_.get_shape())
-        print(relu1.get_shape())
-        
-
-        return input_ + relu1
     
-    
-def conv1d(input_, output_channels,
-           dilation=1, kernel_size=1, causal=False,
-           name="dilated_conv"):
+def conv1d(input_, output_channels, dilation=1, kernel_size=1, causal=False, name="dilated_conv"):
     with tf.variable_scope(name, reuse = tf.AUTO_REUSE):
         weight = tf.get_variable('weight', [1, kernel_size, input_.get_shape()[-1], output_channels],
                                  initializer=tf.truncated_normal_initializer(stddev=0.02, seed=1))
@@ -139,82 +103,44 @@ def conv1d(input_, output_channels,
                                initializer=tf.constant_initializer(0.0))
 
         if causal:
-            padding = [[0, 0], [(kernel_size - 1) * dilation, 0], [0, 0]] # mask
+            padding = [[0, 0], [(kernel_size - 1) * dilation, 0], [0, 0]]
             padded = tf.pad(input_, padding)
             input_expanded = tf.expand_dims(padded, dim=1)
             out = tf.nn.atrous_conv2d(input_expanded, weight, rate=dilation, padding='VALID') + bias
         else:
             input_expanded = tf.expand_dims(input_, dim=1)
-            # out = tf.nn.atrous_conv2d(input_expanded, w, rate = dilation, padding = 'SAME') + bias
             out = tf.nn.conv2d(input_expanded, weight, strides=[1, 1, 1, 1], padding="SAME") + bias
 
         return tf.squeeze(out, [1])
-    
-    
-def layer_norm(x, name, epsilon=1e-8, trainable=True):
-    with tf.variable_scope(name):
-        shape = x.get_shape()
-        beta = tf.get_variable('beta', [int(shape[-1])],
-                               initializer=tf.constant_initializer(0), trainable=trainable)
-        gamma = tf.get_variable('gamma', [int(shape[-1])],
-                                initializer=tf.constant_initializer(1), trainable=trainable)
-    
-        mean, variance = tf.nn.moments(x, axes=[len(shape) - 1], keep_dims=True)
-    
-        x = (x - mean) / tf.sqrt(variance + epsilon)
-    
-        return gamma * x + beta
         
-    
-def weight_variable(shape):
+def weight_variable(shape, validate_shape=False):
     initial = tf.truncated_normal(shape, stddev=0.1)
-    return tf.Variable(initial)
- 
-def bias_variable(shape):
-    initial = tf.constant(0.1, shape=shape)
-    return tf.Variable(initial)
+    return tf.Variable(initial, validate_shape=validate_shape)
 
+def bias_variable(shape, validate_shape=False):
+   # initial = tf.constant(0.1, shape=shape)
+    initial = tf.truncated_normal(shape, mean =0.1, stddev=0.0001)
+    return tf.Variable(initial, validate_shape=validate_shape)
 
-def attention(x):
-    shape = x.get_shape()
-    batch = int(shape[0])
-    c = int(shape[1])
-    dim = int(shape[2])
-    gap_vec = tf.layers.average_pooling1d(x, (c), 1) # dim x 1
-    w1 = weight_variable([batch, dim ,dim])
-    b1 = bias_variable([batch, dim])
-    vec1 = tf.nn.relu(tf.matmul(w1, tf.transpose(gap_vec,[0,2,1]))+tf.expand_dims(b1, -1)) # dim x 1
-    att = []
-    for i in range(batch):
-        sub_att=[]
-        for j in range(c):
-            sub_att.append(tf.squeeze(tf.multiply(tf.expand_dims(x[i][j],-1), vec1[i][:])))
-        sub_att=tf.stack(sub_att,0)
-        att.append(sub_att)
-    return tf.nn.sigmoid(tf.stack(att, 0))
+def attention(x, name='attention'):
+    with tf.variable_scope(name, reuse=tf.AUTO_REUSE):
 
-# non local block
-def attention1(x):
-    
-    shape = x.get_shape()
-    batch = int(shape[0])
-    c = int(shape[1])
-    dim = int(shape[2])
-    
-    key = conv1d(x, c)
-    query = conv1d(x, c)
-    value =conv1d(x, c)
-    
-    kq_map = tf.multiply(query, key)
-    kq_map = tf.nn.relu(kq_map)
-    
-    kqv_map = tf.multiply(kq_map, value)
-    kqv_map = tf.nn.sigmoid(kqv_map)
-    
-    return kqv_map    
-    
+        batch = tf.shape(x)[0]
+        c = int(x.get_shape()[1])
+        dim = int(x.get_shape()[2])
 
+        gap_vec = tf.reduce_mean(x, axis=1, keep_dims=True)
+        print(gap_vec.get_shape())
+        w1 = weight_variable([batch, dim, dim], validate_shape=False)
+        b1 = bias_variable([batch, dim], validate_shape=False)
 
+        ker = tf.nn.relu(tf.matmul(w1, tf.transpose(gap_vec,[0,2,1])) + tf.expand_dims(b1, -1))
+        print(ker.get_shape())
+        w2 = weight_variable([batch, dim, dim], validate_shape=False)
+        b2 = bias_variable([batch, dim], validate_shape=False)
 
-
-
+        ker2 = tf.matmul(w2,ker) + tf.expand_dims(b2, -1)
+        print(ker2.get_shape())
+        att = tf.transpose(tf.transpose(x,[0,2,1])*ker2,[0,2,1])
+        att = tf.nn.softmax(att/10, axis=1)
+        return tf.nn.sigmoid(att)
